@@ -77,6 +77,7 @@ To confirm, compare the frame rate in the viewer's **Stream statistics**, which 
 | `busy` from `screenshot` (HTTP 503) | Another screenshot is running. Retry after it finishes. |
 | Text has the wrong case | Local and desktop Caps Lock states differ. Reload the viewer and press Caps Lock to match the state you want. Local Caps Lock does not affect `screen-relay type`. |
 | Characters are wrong, or `unsupported_input` | Set `keyboard.layout` and restart. With `--display`, change the existing desktop's layout instead. Use `screen-relay type` for text and `screen-relay key` for shortcuts. See [Configuration](/docs/configuration). |
+| Browser shortcuts such as Ctrl+W or Ctrl+T act on the browser instead of the desktop | Choose **Capture keyboard** in the viewer. The viewer switches to fullscreen and sends browser shortcuts to the desktop. Press Ctrl+Alt+Shift+K to release the keyboard, or hold Esc for about two seconds to leave fullscreen. Capture needs a Chromium-based browser such as Chrome or Edge. Shortcuts that the operating system handles, such as Ctrl+Alt+Del on Windows, never reach the browser. |
 | Mac Command shortcuts behave differently | Open **Send keys** and turn off **Use ⌘ as Ctrl** to send Command as Super instead of Ctrl. |
 
 ## Remote access

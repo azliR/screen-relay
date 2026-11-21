@@ -2,6 +2,7 @@ import {
   CLOSE_TAKEN, HID_KEYS, MAX_BYTES_IN_FLIGHT, encodeAck, encodeInput, h264Codec, isLoopback, parseMessage, socketTarget, validToken,
   type InputEvent, type Message,
 } from '../src/protocol/index.js';
+import { CAPTURE_EXIT_LABEL, KeyboardCapture, isCaptureExitChord } from './keyboard-capture.js';
 
 const keys = HID_KEYS;
 const canvas = document.querySelector('#screen') as HTMLCanvasElement,
@@ -555,6 +556,10 @@ function position(e: MouseEvent) {
   x = px / (canvas.width - 1);
   y = py / (canvas.height - 1);
 }
+function releaseHeld() {
+  for (const code of held) if (!dropLatch(code)) releaseKey(code);
+  held.clear();
+}
 canvas.addEventListener('keydown', (e) => {
   const code = mapKey(keys[e.code]);
   if (!code) return;
@@ -849,7 +854,38 @@ new MutationObserver(syncStatus).observe(status, { childList: true, characterDat
 syncStatus();
 toggle.addEventListener('click', () => setExpanded(actions.hidden));
 canvas.addEventListener('pointerdown', () => showPanel(null));
+const captureHint = document.querySelector('#capture-hint') as HTMLElement;
+captureHint.textContent = `Keyboard captured · press ${CAPTURE_EXIT_LABEL} to release`;
+let captureHintTimer: any;
+const keyboardCapture = new KeyboardCapture((active) => {
+  const button = toolbar.querySelector('[data-action="capture"]')!;
+  const label = active ? `Stop capturing keyboard (${CAPTURE_EXIT_LABEL})` : 'Capture keyboard';
+  button.setAttribute('aria-pressed', String(active));
+  button.setAttribute('aria-label', label);
+  button.setAttribute('title', label);
+  clearTimeout(captureHintTimer);
+  captureHint.hidden = !active;
+  if (active) captureHintTimer = setTimeout(() => { captureHint.hidden = true; }, 4000);
+});
+function stopKeyboardCapture(): Promise<void> {
+  return keyboardCapture.stop().catch((error) => setStatus(`Could not stop keyboard capture: ${error.message}`));
+}
+window.addEventListener('keydown', (e) => {
+  if (!keyboardCapture.active || !isCaptureExitChord(e)) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  releaseHeld();
+  stopKeyboardCapture();
+}, { capture: true });
+function toggleKeyboardCapture(): Promise<void> {
+  if (keyboardCapture.active) return stopKeyboardCapture();
+  return keyboardCapture.start().then(
+    () => canvas.focus(),
+    (error) => setStatus(`Could not capture the keyboard: ${error.message}`),
+  );
+}
 const toolbarActions: Record<string, (button: Element) => void> = {
+  capture: () => { toggleKeyboardCapture(); },
   fullscreen: () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen())
     .catch(() => {}),
   scale: () => showPanel('scale'),
@@ -876,6 +912,7 @@ actions.addEventListener('click', (e) => {
   if (button) toolbarActions[(button as HTMLElement).dataset.action!](button);
 });
 document.addEventListener('fullscreenchange', () => {
+  keyboardCapture.syncFullscreen();
   toolbar.querySelector('[data-action="fullscreen"]')!.setAttribute('aria-pressed', String(Boolean(document.fullscreenElement)));
 });
 panels.clipboard.addEventListener('click', (e) => {
@@ -956,4 +993,4 @@ applyControl();
 watchDpr();
 connect();
 
-export { socket, capsLock, connect, reset, setScale, setViewOnly, toggleSharp, watchDpr, toggleMeta, replaceAccess };
+export { socket, capsLock, connect, reset, setScale, setViewOnly, toggleSharp, watchDpr, toggleMeta, replaceAccess, toggleKeyboardCapture };

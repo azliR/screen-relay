@@ -1051,3 +1051,103 @@ test('an ended grant stays disconnected until a new credential is supplied', () 
   assert.equal(app.sockets.at(-1).url, 'ws://localhost/stream?clipboard=1');
   assert.equal(action('control').hidden, false);
 });
+
+function capturedKey(app, code, modifiers = {}) {
+  let stopped = false;
+  const event = {
+    code, repeat: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...modifiers,
+    preventDefault() {}, stopImmediatePropagation() { stopped = true; }, getModifierState: () => false,
+  };
+  app.windowListeners.keydown(event);
+  if (!stopped) app.document.querySelector('#screen').handlers.keydown(event);
+}
+
+function captureViewer({ lockFails = false } = {}) {
+  const calls = [];
+  const keyboard = {
+    lock: async () => { calls.push('lock'); if (lockFails) throw new Error('lock refused'); },
+    unlock: () => calls.push('unlock'),
+  };
+  const app = viewer({ navigator: { keyboard } });
+  app.document.fullscreenElement = null;
+  app.document.documentElement.requestFullscreen = async () => { calls.push('enter'); app.document.fullscreenElement = app.document.documentElement; };
+  app.document.exitFullscreen = async () => { calls.push('exit'); app.document.fullscreenElement = null; };
+  app.sockets[0].onopen();
+  app.frame(1);
+  const capture = () => runInContext('relayViewer.toggleKeyboardCapture()', app.context);
+  const button = () => app.document.querySelector('#toolbar').querySelector('[data-action="capture"]');
+  return { app, calls, capture, button };
+}
+
+test('keyboard capture enters fullscreen and locks the keyboard', async () => {
+  const { app, calls, capture, button } = captureViewer();
+  await capture();
+  assert.deepEqual(calls, ['enter', 'lock']);
+  assert.equal(button().attributes['aria-pressed'], 'true');
+  assert.equal(app.document.querySelector('#capture-hint').hidden, false);
+});
+
+test('the exit chord releases held keys on the remote and ends capture without sending the chord', async () => {
+  const { app, calls, capture, button } = captureViewer();
+  await capture();
+  capturedKey(app, 'ControlLeft', { ctrlKey: true });
+  capturedKey(app, 'AltLeft', { ctrlKey: true, altKey: true });
+  capturedKey(app, 'ShiftLeft', { ctrlKey: true, altKey: true, shiftKey: true });
+  capturedKey(app, 'KeyK', { ctrlKey: true, altKey: true, shiftKey: true });
+  await settle();
+  chord(app, 'keyup', 'KeyK', { ctrlKey: true, altKey: true, shiftKey: true });
+  chord(app, 'keyup', 'ShiftLeft', { ctrlKey: true, altKey: true });
+  chord(app, 'keyup', 'AltLeft', { ctrlKey: true });
+  chord(app, 'keyup', 'ControlLeft');
+  assert.deepEqual(inputBytes(app), [[1, 224], [1, 226], [1, 225], [2, 224], [2, 226], [2, 225]]);
+  assert.deepEqual(calls, ['enter', 'lock', 'unlock', 'exit']);
+  assert.equal(button().attributes['aria-pressed'], 'false');
+});
+
+test('the exit chord ends capture even when the canvas does not have focus', async () => {
+  const { app, calls, capture } = captureViewer();
+  await capture();
+  app.windowListeners.keydown({ code: 'KeyK', ctrlKey: true, altKey: true, shiftKey: true, metaKey: false, preventDefault() {}, stopImmediatePropagation() {} });
+  await settle();
+  assert.deepEqual(calls, ['enter', 'lock', 'unlock', 'exit']);
+});
+
+test('keyboard capture does not start when the page leaves fullscreen before the lock settles', async () => {
+  const { app, calls, capture, button } = captureViewer();
+  app.document.documentElement.requestFullscreen = async () => { calls.push('enter'); };
+  await capture();
+  assert.deepEqual(calls, ['enter', 'lock', 'unlock']);
+  assert.equal(button().attributes['aria-pressed'], undefined);
+  assert.equal(app.document.querySelector('#status').textContent, 'Could not capture the keyboard: The page left fullscreen before the keyboard was locked');
+});
+
+test('the exit chord is an ordinary key combination while capture is off', () => {
+  const { app } = captureViewer();
+  capturedKey(app, 'KeyK', { ctrlKey: true, altKey: true, shiftKey: true });
+  assert.deepEqual(inputBytes(app), [[1, 14]]);
+});
+
+test('leaving fullscreen another way ends keyboard capture', async () => {
+  const { app, calls, capture, button } = captureViewer();
+  await capture();
+  app.document.fullscreenElement = null;
+  app.listeners.fullscreenchange();
+  assert.deepEqual(calls, ['enter', 'lock', 'unlock']);
+  assert.equal(button().attributes['aria-pressed'], 'false');
+});
+
+test('a refused keyboard lock leaves fullscreen and reports the error', async () => {
+  const { app, calls, capture, button } = captureViewer({ lockFails: true });
+  await capture();
+  assert.deepEqual(calls, ['enter', 'lock', 'exit']);
+  assert.equal(button().attributes['aria-pressed'], undefined);
+  assert.equal(app.document.querySelector('#status').textContent, 'Could not capture the keyboard: lock refused');
+});
+
+test('keyboard capture reports an unsupported browser', async () => {
+  const app = viewer();
+  app.sockets[0].onopen();
+  app.frame(1);
+  await runInContext('relayViewer.toggleKeyboardCapture()', app.context);
+  assert.equal(app.document.querySelector('#status').textContent, 'Could not capture the keyboard: Keyboard capture needs a Chromium-based browser');
+});
